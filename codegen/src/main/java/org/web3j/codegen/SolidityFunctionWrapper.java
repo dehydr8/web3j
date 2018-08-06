@@ -245,11 +245,19 @@ public class SolidityFunctionWrapper extends Generator {
 
         List<MethodSpec> methodSpecs = new ArrayList<>();
         boolean constructor = false;
+        
+        methodSpecs.add(buildExecuteFunction());
 
         for (AbiDefinition functionDefinition : functionDefinitions) {
             if (functionDefinition.getType().equals("function")) {
-                MethodSpec ms = buildFunction(functionDefinition);
-                methodSpecs.add(ms);
+            	
+            	if (functionDefinition.isConstant() || functionDefinition.isPayable()) {
+                    methodSpecs.add(buildFunction(functionDefinition));
+            	} else {
+                    methodSpecs.add(buildFunctionBody(functionDefinition));
+                    methodSpecs.add(buildFunctionWrapper(functionDefinition));
+            	}
+            	
 
             } else if (functionDefinition.getType().equals("event")) {
                 methodSpecs.addAll(buildEventFunctions(functionDefinition, classBuilder));
@@ -583,6 +591,49 @@ public class SolidityFunctionWrapper extends Generator {
         return result;
     }
 
+    MethodSpec buildFunctionBody(
+            AbiDefinition functionDefinition) throws ClassNotFoundException {
+        String functionName = functionDefinition.getName();
+
+        MethodSpec.Builder methodBuilder =
+                MethodSpec.methodBuilder(String.format("%sFunction", functionName))
+                        .addModifiers(Modifier.PUBLIC);
+
+        String inputParams = addParameters(methodBuilder, functionDefinition.getInputs());
+
+        buildTransactionBodyFunction(
+                functionDefinition, methodBuilder, inputParams);
+
+        return methodBuilder.build();
+    }
+    
+    MethodSpec buildExecuteFunction() {
+        MethodSpec.Builder methodBuilder =
+                MethodSpec.methodBuilder("executeFunction")
+                        .addModifiers(Modifier.PUBLIC);
+        
+        methodBuilder.addParameter(ParameterSpec.builder(TypeName.get(Function.class), "function").build());
+        methodBuilder.returns(buildRemoteCall(TypeName.get(TransactionReceipt.class)));
+        methodBuilder.addStatement("return executeRemoteCallTransaction(function)");
+        return methodBuilder.build();
+    }
+
+    MethodSpec buildFunctionWrapper(
+            AbiDefinition functionDefinition) throws ClassNotFoundException {
+        String functionName = functionDefinition.getName();
+
+        MethodSpec.Builder methodBuilder =
+                MethodSpec.methodBuilder(functionName)
+                        .addModifiers(Modifier.PUBLIC);
+
+        String inputParams = addParameters(methodBuilder, functionDefinition.getInputs());
+
+        buildTransactionWrapperFunction(
+                functionDefinition, methodBuilder, inputParams);
+
+        return methodBuilder.build();
+    }
+
     MethodSpec buildFunction(
             AbiDefinition functionDefinition) throws ClassNotFoundException {
         String functionName = functionDefinition.getName();
@@ -695,6 +746,60 @@ public class SolidityFunctionWrapper extends Generator {
     private static ParameterizedTypeName buildRemoteCall(TypeName typeName) {
         return ParameterizedTypeName.get(
                 ClassName.get(RemoteCall.class), typeName);
+    }
+
+    private void buildTransactionBodyFunction(
+            AbiDefinition functionDefinition,
+            MethodSpec.Builder methodBuilder,
+            String inputParams) throws ClassNotFoundException {
+
+        if (functionDefinition.hasOutputs()) {
+            //CHECKSTYLE:OFF
+            reporter.report(String.format(
+                    "Definition of the function %s returns a value but is not defined as a view function. "
+                            + "Please ensure it contains the view modifier if you want to read the return value",
+                    functionDefinition.getName()));
+            //CHECKSTYLE:ON
+        }
+
+        String functionName = functionDefinition.getName();
+
+        methodBuilder.returns(TypeName.get(Function.class));
+
+        methodBuilder.addStatement("final $T function = new $T(\n$N, \n$T.<$T>asList($L), \n$T"
+                        + ".<$T<?>>emptyList())",
+                Function.class, Function.class, funcNameToConst(functionName),
+                Arrays.class, Type.class, inputParams, Collections.class,
+                TypeReference.class);
+        
+        methodBuilder.addStatement("return function");
+    }
+
+    private void buildTransactionWrapperFunction(
+            AbiDefinition functionDefinition,
+            MethodSpec.Builder methodBuilder,
+            String inputParams) throws ClassNotFoundException {
+
+        if (functionDefinition.hasOutputs()) {
+            //CHECKSTYLE:OFF
+            reporter.report(String.format(
+                    "Definition of the function %s returns a value but is not defined as a view function. "
+                            + "Please ensure it contains the view modifier if you want to read the return value",
+                    functionDefinition.getName()));
+            //CHECKSTYLE:ON
+        }
+        
+        List<ParameterSpec> inputParameterTypes = buildParameterTypes(functionDefinition.getInputs());
+        List<String> parameterNames = inputParameterTypes.stream().map(spec -> spec.name).collect(Collectors.toList());
+
+        String functionName = functionDefinition.getName();
+
+        methodBuilder.returns(buildRemoteCall(TypeName.get(TransactionReceipt.class)));
+
+        methodBuilder.addStatement("final $T function = $NFunction($L)",
+                Function.class, functionName, String.join(", ", parameterNames));
+        
+        methodBuilder.addStatement("return executeRemoteCallTransaction(function)");
     }
 
     private void buildTransactionFunction(
