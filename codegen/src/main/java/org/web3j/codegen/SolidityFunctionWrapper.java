@@ -188,15 +188,36 @@ public class SolidityFunctionWrapper extends Generator {
 
         }
     }
+    
+    private AnnotationSpec suppressWarnings(String... warnings) {
+        AnnotationSpec.Builder builder = AnnotationSpec.builder(SuppressWarnings.class);
+        CodeBlock.Builder names = CodeBlock.builder();
+        boolean first = true;
+        for (String warning : warnings) {
+            if (first) {
+                names.add("$S", warning);
+                first = false;
+            } else {
+                names.add(", $S", warning);
+            }
+        }
+        if (warnings.length == 1) {
+            builder.addMember("value", names.build());
+        } else {
+            builder.addMember("value", "{$L}", names.build());
+        }
+        return builder.build();
+    }
 
 
     private TypeSpec.Builder createClassBuilder(String className, String binary) {
 
         String javadoc = CODEGEN_WARNING + getWeb3jVersion();
-
+        
         return TypeSpec.classBuilder(className)
                 .addModifiers(Modifier.PUBLIC)
                 .addJavadoc(javadoc)
+                .addAnnotation(suppressWarnings("deprecation", "rawtypes", "unchecked"))
                 .superclass(Contract.class)
                 .addField(createBinaryDefinition(binary));
     }
